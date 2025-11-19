@@ -118,13 +118,13 @@ This guide provides instructions on setting up user authentication and establish
 
         // or you can create new response struct without password field
         // userResponse := struct {
-        // 	ID    uint   `json:"id"`
-        // 	Name  string `json:"name"`
-        // 	Email string `json:"email"`
+        //  ID    uint   `json:"id"`
+        //  Name  string `json:"name"`
+        //  Email string `json:"email"`
         // }{
-        // 	ID:    user.ID,
-        // 	Name:  user.Name,
-        // 	Email: user.Email,
+        //  ID:    user.ID,
+        //  Name:  user.Name,
+        //  Email: user.Email,
         // }
 
         c.JSON(http.StatusOK, gin.H{"user": user})
@@ -162,20 +162,20 @@ Suppose we want to protect certain routes so that only authenticated users can a
         //using bearer token from header u can use this also by uncommenting below code
         // authHeader := c.GetHeader("Authorization")
         // if authHeader == "" {
-        // 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-        // 	return
+        //  c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+        //  return
         // }
 
         // if !strings.Contains(authHeader, "Bearer ") {
-        // 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization header format"})
-        // 	return
+        //  c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid Authorization header format"})
+        //  return
         // }
 
         // //split the bearer and token
         // tokenString := strings.Split(authHeader, "Bearer ")[1]
         // if tokenString == "" {
-        // 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization token required"})
-        // 	return
+        //  c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization token required"})
+        //  return
         // }
 
         // get jwt secret from env this is used to verify the token
@@ -304,9 +304,9 @@ In this section, we will establish a one-to-many relationship between `User` and
     }
    ```
 
-   3. Update the database by reloading the server. GORM will automatically create the necessary foreign key constraints based on the model definitions.
+3. Update the database by reloading the server. GORM will automatically create the necessary foreign key constraints based on the model definitions.
 
-   4. Now in the creation of Blog, you must insert user_id also to associate the blog post with a user. For example, in your Blog creation controller, you can do something like this:
+4. Now in the creation of Blog, you must insert user_id also to associate the blog post with a user. For example, in your Blog creation controller, you can do something like this:
 
    ```go
     func CreateBlog(c *gin.Context) {
@@ -350,7 +350,7 @@ In this section, we will establish a one-to-many relationship between `User` and
 
    Not quite different from before, but now we are associating the blog post with the authenticated user by setting the `UserID` field to the ID of the user retrieved from the context.
 
-   5. Now you can load blog posts along with their associated user information using GORM's `Preload` method. For example, when fetching blog posts, you can do:
+5. Now you can load blog posts along with their associated user information using GORM's `Preload` method. For example, when fetching blog posts, you can do:
 
    ```go
     var blogs []models.Blog
@@ -515,3 +515,150 @@ In this example, we will make new Entity or Model named Class to simulate many-t
 
 9. Now try to get class participants and user enrolled classes using Postman or any API testing tool.
 
+### Updating Many-to-Many Relationships
+
+1. Create new function in controller that will update the users enrolled in a class:
+
+   ```go
+   func UpdateClassParticipants(c *gin.Context) {
+        classID := c.Param("id")
+        var body struct {
+            UserIDs []uint `json:"user_ids" binding:"required"`
+        }
+        if err := c.BindJSON(&body); err != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+            return
+        }
+
+        var class models.Class
+        if result := initializers.DB.First(&class, classID); result.Error != nil {
+            c.JSON(http.StatusBadRequest, gin.H{"error": "Class not found"})
+            return
+        }
+
+        // fetch users based on provided IDs
+        var users []*models.User
+        for _, id := range body.UserIDs {
+            var user models.User
+            if result := initializers.DB.First(&user, id); result.Error != nil {
+                c.JSON(http.StatusBadRequest, gin.H{"error": "User not found with ID: " + strconv.Itoa(int(id))})
+                return
+            }
+            users = append(users, &user)
+        }
+
+        // use GORM association to replace many2many relations
+        if err := initializers.DB.Model(&class).Association("Users").Replace(users); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+            return
+        }
+
+        // reload class with users to return updated relation
+        if result := initializers.DB.Preload("Users").First(&class, classID); result.Error != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+            return
+        }
+        c.JSON(http.StatusOK, gin.H{"class": class})
+   }
+
+   ```
+
+   In this function, we first retrieve the class by its ID using GIN Parameter. We then parse the request body to get the list of user IDs that should be enrolled in the class. Then we check if the class and each user exists in the database. Finally, we use GORM's `Association("Users").Replace(users)` method to update the many-to-many relationship by replacing the existing users with the new list. After updating, we reload the class with its associated users to return the updated relationship in the response.
+
+2. Create route in `main.go` for updating class participants:
+
+   ```go
+   router.PUT("/class/:id/participants", controllers.UpdateClassParticipants)
+   ```
+
+### Deleting Records from Many-to-Many Relationships
+
+When working with many-to-many relationships, you often need to remove specific associations between entities. GORM provides convenient methods to handle these operations through its Association API.
+
+#### Deleting a Single User from a Class
+
+To remove a specific user from a class, you can use the `Delete` method on the association:
+
+```go
+func DeleteParticipantFromClass(c *gin.Context) {
+    classID := c.Param("id")
+    userID := c.Param("user_id")
+
+    var class models.Class
+    if result := initializers.DB.First(&class, classID); result.Error != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Class not found"})
+        return
+    }
+
+    var user models.User
+    if result := initializers.DB.First(&user, userID); result.Error != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "User not found"})
+    return
+    }
+
+    // use GORM association to delete many2many relation
+    if err := initializers.DB.Model(&class).Association("Users").Delete(&user); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "User removed from class successfully"})
+}
+```
+
+This function:
+
+- Retrieves both the class and user from the database using their IDs from URL parameters
+- Uses `Association("Users").Delete(&user)` to remove the relationship between the specific user and class
+- Only deletes the relationship record in the `user_classes` join table, not the actual user or class records
+- Returns a success message confirming the removal
+
+#### Deleting a User from All Classes
+
+To remove a user from all classes they're enrolled in, use the `Clear` method:
+
+```go
+func DeleteUserFromAllClasses(c *gin.Context) {
+    userID := c.Param("id")
+
+    var user models.User
+    if result := initializers.DB.First(&user, userID); result.Error != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "User not found"})
+    return
+    }
+
+    // use GORM association to clear many2many relations
+    if err := initializers.DB.Model(&user).Association("Classes").Clear(); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+    return
+    }
+
+c.JSON(http.StatusOK, gin.H{"message": "User removed from all classes successfully"})
+}
+```
+
+This function:
+
+- Retrieves the user from the database using the ID from URL parameter
+- Uses `Association("Classes").Clear()` to remove all relationships between the user and their classes
+- Deletes all entries in the `user_classes` join table where the user is involved
+- Does not delete the user record itself or any class records
+
+#### Key Differences Between Delete and Clear
+
+- **Delete**: Removes specific association(s). You pass the related record(s) you want to unlink.
+- **Clear**: Removes all associations for that model. No parameters needed - it clears everything.
+
+#### Create Routes for Deletion Operations
+
+Add these routes in `main.go`:
+
+```go
+router.DELETE("/class/:id/participants/:user_id", controllers.DeleteParticipantFromClass)
+router.DELETE("/user/:id/classes", controllers.DeleteUserFromAllClasses)
+```
+
+Now you can test these deletion endpoints:
+
+- `DELETE /class/1/participants/5` - Removes user with ID 5 from class with ID 1
+- `DELETE /user/5/classes` - Removes user with ID 5 from all classes they're enrolled in
