@@ -42,5 +42,9 @@ func main() {
 	router.GET("/class/:id/participants", controllers.GetClassParticipants)
 	router.GET("/user/:id/classes", controllers.GetClassesUserEnrolled)
 
+	router.PUT("/class/:id/participants", controllers.UpdateClassParticipants)
+	router.DELETE("/class/:id/participants/:user_id", controllers.DeleteParticipantFromClass)
+	router.DELETE("/user/:id/classes", controllers.DeleteUserFromAllClasses)
+
 	router.Run()
 }
